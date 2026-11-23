@@ -1,0 +1,3 @@
+# O Netlify publica só a pasta "site" (sem etapa de build)
+[build]
+  publish = "site"
