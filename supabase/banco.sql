@@ -58,6 +58,17 @@ create table if not exists public.historico (
 create index if not exists historico_quando_idx on public.historico (quando desc);
 create index if not exists unidades_cidade_idx  on public.unidades (cidade_id);
 
+-- ---------- Versão 2: cidades encerradas, divisões e designações -------
+-- (em bancos já existentes, estas linhas acrescentam as colunas novas)
+
+alter table public.cidades  add column if not exists encerrada_em       timestamptz;
+alter table public.cidades  add column if not exists encerrada_por      text;
+alter table public.unidades add column if not exists divisao            text;
+alter table public.unidades add column if not exists calc_designado_por text;
+alter table public.unidades add column if not exists calc_designado_em  timestamptz;
+alter table public.unidades add column if not exists des_designado_por  text;
+alter table public.unidades add column if not exists des_designado_em   timestamptz;
+
 -- ---------- Funções de permissão --------------------------------------
 
 create or replace function public.eh_aprovado() returns boolean
@@ -68,6 +79,12 @@ $$;
 create or replace function public.eh_admin() returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.perfis where id = auth.uid() and status = 'aprovado' and admin);
+$$;
+
+-- Cidade aberta = não encerrada. Unidades de cidade encerrada ficam só para consulta.
+create or replace function public.cidade_aberta(p_cidade bigint) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.cidades where id = p_cidade and encerrada_em is null);
 $$;
 
 -- ---------- Novo cadastro -> perfil "aguardando" ----------------------
@@ -117,9 +134,19 @@ revoke execute on function public.registrar(bigint, text, text, text, text) from
 
 create or replace function public.log_unidades() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare
+  v_nome text;
 begin
+  select nome into v_nome from public.perfis where id = auth.uid();
+  v_nome := coalesce(v_nome, 'Sistema');
+
   if tg_op = 'INSERT' then
-    perform public.registrar(new.cidade_id, new.codigo, 'Unidade criada', null, null);
+    -- quem designou: sempre quem está gravando (não dá para forjar)
+    new.calc_designado_por := case when new.calc_resp is null then null else v_nome end;
+    new.calc_designado_em  := case when new.calc_resp is null then null else now() end;
+    new.des_designado_por  := case when new.des_resp  is null then null else v_nome end;
+    new.des_designado_em   := case when new.des_resp  is null then null else now() end;
+    perform public.registrar(new.cidade_id, new.codigo, 'Unidade criada', null, new.divisao);
     return new;
   elsif tg_op = 'DELETE' then
     perform public.registrar(old.cidade_id, old.codigo, 'Unidade excluída', null, null);
@@ -127,8 +154,27 @@ begin
   end if;
 
   new.atualizado_em := now();
+
+  -- designações: só mudam quando o responsável muda
+  if new.calc_resp is distinct from old.calc_resp then
+    new.calc_designado_por := case when new.calc_resp is null then null else v_nome end;
+    new.calc_designado_em  := case when new.calc_resp is null then null else now() end;
+  elsif auth.uid() is not null then
+    new.calc_designado_por := old.calc_designado_por;
+    new.calc_designado_em  := old.calc_designado_em;
+  end if;
+  if new.des_resp is distinct from old.des_resp then
+    new.des_designado_por := case when new.des_resp is null then null else v_nome end;
+    new.des_designado_em  := case when new.des_resp is null then null else now() end;
+  elsif auth.uid() is not null then
+    new.des_designado_por := old.des_designado_por;
+    new.des_designado_em  := old.des_designado_em;
+  end if;
+
   if new.codigo is distinct from old.codigo then
     perform public.registrar(new.cidade_id, new.codigo, 'Código', old.codigo, new.codigo); end if;
+  if new.divisao is distinct from old.divisao then
+    perform public.registrar(new.cidade_id, new.codigo, 'Divisão', old.divisao, new.divisao); end if;
   if new.calc_resp is distinct from old.calc_resp then
     perform public.registrar(new.cidade_id, new.codigo, 'Cálculo · Responsável', old.calc_resp, new.calc_resp); end if;
   if new.calc_status is distinct from old.calc_status then
@@ -153,6 +199,8 @@ create trigger historico_unidades
 
 create or replace function public.log_cidades() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare
+  v_nome text;
 begin
   if tg_op = 'INSERT' then
     -- AFTER INSERT: a cidade já existe, então o nome aparece no histórico
@@ -162,6 +210,24 @@ begin
     perform public.registrar(old.id, null, 'Cidade excluída', null, null);
     return old;
   end if;
+
+  -- encerrar / reabrir: só o administrador
+  if new.encerrada_em is distinct from old.encerrada_em then
+    if auth.uid() is not null and not public.eh_admin() then
+      raise exception 'Só o administrador pode encerrar ou reabrir cidades.';
+    end if;
+    select nome into v_nome from public.perfis where id = auth.uid();
+    if new.encerrada_em is not null then
+      new.encerrada_por := coalesce(v_nome, 'Sistema');
+      perform public.registrar(new.id, null, 'Cidade encerrada', null, null);
+    else
+      new.encerrada_por := null;
+      perform public.registrar(new.id, null, 'Cidade reaberta', null, null);
+    end if;
+  elsif auth.uid() is not null then
+    new.encerrada_por := old.encerrada_por;
+  end if;
+
   if new.nome is distinct from old.nome then
     perform public.registrar(new.id, null, 'Nome da cidade', old.nome, new.nome); end if;
   if new.contrato is distinct from old.contrato then
@@ -227,8 +293,11 @@ create policy cidades_editar  on public.cidades for update to authenticated usin
 create policy cidades_excluir on public.cidades for delete to authenticated using (public.eh_admin());
 
 create policy unidades_ver     on public.unidades for select to authenticated using (public.eh_aprovado());
-create policy unidades_criar   on public.unidades for insert to authenticated with check (public.eh_aprovado());
-create policy unidades_editar  on public.unidades for update to authenticated using (public.eh_aprovado()) with check (public.eh_aprovado());
+create policy unidades_criar   on public.unidades for insert to authenticated
+  with check (public.eh_aprovado() and public.cidade_aberta(cidade_id));
+create policy unidades_editar  on public.unidades for update to authenticated
+  using (public.eh_aprovado() and public.cidade_aberta(cidade_id))
+  with check (public.eh_aprovado() and public.cidade_aberta(cidade_id));
 create policy unidades_excluir on public.unidades for delete to authenticated using (public.eh_admin());
 
 -- Histórico: só leitura (quem escreve é o banco, pelos gatilhos acima).
@@ -242,7 +311,7 @@ grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on public.cidades, public.unidades to authenticated;
 grant select, update on public.perfis to authenticated;
 grant select on public.historico to authenticated;
-grant execute on function public.eh_aprovado(), public.eh_admin() to authenticated;
+grant execute on function public.eh_aprovado(), public.eh_admin(), public.cidade_aberta(bigint) to authenticated;
 
 -- ---------- Tempo real -------------------------------------------------
 
@@ -256,3 +325,20 @@ begin
     end;
   end loop;
 end $$;
+
+-- ---------- Versão 2: preencher "designado por" das atividades antigas --
+-- Usa o histórico para descobrir quem colocou cada responsável.
+
+update public.unidades u set
+  calc_designado_por = h.usuario_nome, calc_designado_em = h.quando
+from (select distinct on (cidade_id, unidade, valor_novo) cidade_id, unidade, valor_novo, usuario_nome, quando
+      from public.historico where campo = 'Cálculo · Responsável' order by cidade_id, unidade, valor_novo, quando desc) h
+where u.calc_resp is not null and u.calc_designado_por is null
+  and h.cidade_id = u.cidade_id and h.unidade = u.codigo and h.valor_novo = u.calc_resp;
+
+update public.unidades u set
+  des_designado_por = h.usuario_nome, des_designado_em = h.quando
+from (select distinct on (cidade_id, unidade, valor_novo) cidade_id, unidade, valor_novo, usuario_nome, quando
+      from public.historico where campo = 'Desenho · Responsável' order by cidade_id, unidade, valor_novo, quando desc) h
+where u.des_resp is not null and u.des_designado_por is null
+  and h.cidade_id = u.cidade_id and h.unidade = u.codigo and h.valor_novo = u.des_resp;

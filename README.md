@@ -12,6 +12,8 @@ São 4 etapas. A primeira vez leva uns 15 minutos.
 | `site/config.js` | Endereço e chave pública do Supabase |
 | `supabase/banco.sql` | Cria as tabelas, a segurança e o histórico no Supabase |
 | `supabase/correcao.sql` | Correção de permissões (já aplicada) |
+
+Sempre que o `banco.sql` mudar, rode o arquivo inteiro de novo no SQL Editor. Ele só acrescenta o que falta e não apaga dados.
 | `netlify.toml` | Diz ao Netlify para publicar a pasta `site` |
 
 **Publicação automática:** o Netlify está ligado a este repositório. Qualquer mudança enviada para a branch `main` é publicada sozinha em cerca de 1 minuto.
@@ -65,7 +67,10 @@ Para atualizar depois: em *Deploys*, arraste a pasta de novo.
 - **Histórico:** cada alteração é gravada pelo próprio banco com quem fez, o que mudou, o valor antigo, o novo e a hora. Ninguém consegue editar nem apagar o histórico pelo aplicativo.
 - **Tempo real:** quando alguém muda algo, a tela dos outros atualiza sozinha.
 - **Atraso:** uma atividade está atrasada quando a previsão de entrega já passou e o status ainda não é *Emitida*.
-- **Responsáveis:** a lista mostra os usuários aprovados.
+- **Responsáveis:** a lista mostra os usuários aprovados. O banco grava quem designou cada atividade e quando.
+- **Minhas atividades:** quem não é administrador abre o Início já filtrado nas atividades designadas para si, e pode recusar (tirar o próprio nome).
+- **Cidades encerradas:** o administrador encerra ou reabre uma cidade. Encerradas saem do Início e ficam só para consulta.
+- **Divisões:** ao adicionar uma unidade, escolha uma divisão que já existe na cidade, crie uma nova ou deixe sem divisão.
 
 ## Tarefas de manutenção (no Supabase)
 
