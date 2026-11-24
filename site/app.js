@@ -154,7 +154,7 @@ function shell(aba, html, cheio) {
   const p = S.perfil, pend = S.perfis.filter(x => x.status === "aguardando").length;
   const tab = (id, nome, extra = "") => `<a href="#${id}" class="${aba === id ? "on" : ""}">${nome}${extra}</a>`;
   return `<header class="top">
-      <div class="brand">Controle de Atividades<small>Cálculo e Desenho</small></div>
+      <div class="brand">Controle de Atividades<small>Cálculo e Desenho · v2.0</small></div>
       <nav class="tabs">${tab("inicio", "Início")}${tab("cidades", "Cidades")}${p.admin ? tab("aprovacoes", "Aprovações", pend ? `<span class="badge">${pend}</span>` : "") : ""}</nav>
       <div class="sp"></div>
       <div class="user"><div class="avatar">${esc(iniciais(p.nome))}</div><span>${esc(p.nome)}${p.admin ? " · admin" : ""}</span>
