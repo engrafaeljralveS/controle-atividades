@@ -1,0 +1,29 @@
+# Roda o supabase/banco.sql no Supabase sempre que ele mudar na branch main.
+# Precisa do segredo SUPABASE_DB_URL (Settings > Secrets and variables > Actions).
+name: Atualizar banco (Supabase)
+
+on:
+  push:
+    branches: [main]
+    paths: ["supabase/banco.sql"]
+  workflow_dispatch:
+
+concurrency: banco
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rodar banco.sql no Supabase
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$DB_URL" ]; then
+            echo "::error::Falta o segredo SUPABASE_DB_URL no GitHub (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+          # tudo ou nada: se der erro, nada é alterado
+          psql "$DB_URL" -v ON_ERROR_STOP=1 --single-transaction -q -f supabase/banco.sql
+          echo "Banco atualizado com sucesso."
