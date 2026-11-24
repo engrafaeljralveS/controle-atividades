@@ -108,6 +108,14 @@ do $$ begin
   end if;
 end $$;
 
+-- ---------- Versão 4: usuário chefe -----------------------------------
+-- Chefe = quem decide quem é administrador. É o primeiro administrador.
+
+alter table public.perfis add column if not exists chefe boolean not null default false;
+update public.perfis set chefe = true
+where id = (select id from public.perfis where admin and status = 'aprovado' order by criado_em limit 1)
+  and not exists (select 1 from public.perfis where chefe);
+
 -- ---------- Funções de permissão --------------------------------------
 
 create or replace function public.eh_aprovado() returns boolean
@@ -118,6 +126,11 @@ $$;
 create or replace function public.eh_admin() returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.perfis where id = auth.uid() and status = 'aprovado' and admin);
+$$;
+
+create or replace function public.eh_chefe() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.perfis where id = auth.uid() and status = 'aprovado' and chefe);
 $$;
 
 -- Cidade aberta = não encerrada. Unidades de cidade encerrada ficam só para consulta.
@@ -135,12 +148,13 @@ declare
   primeiro boolean;
 begin
   select not exists (select 1 from public.perfis) into primeiro;
-  insert into public.perfis (id, nome, email, status, admin)
+  insert into public.perfis (id, nome, email, status, admin, chefe)
   values (
     new.id,
     coalesce(nullif(trim(new.raw_user_meta_data->>'nome'), ''), split_part(new.email, '@', 1)),
     new.email,
     case when primeiro then 'aprovado' else 'aguardando' end,
+    primeiro,
     primeiro
   );
   return new;
@@ -326,6 +340,31 @@ create trigger historico_contratos
   before insert or update or delete on public.contratos
   for each row execute function public.log_contratos();
 
+-- Regras de acesso que nenhum usuário consegue burlar pelo aplicativo
+create or replace function public.protege_perfis() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return new; end if;   -- SQL Editor / automação
+  if new.chefe is distinct from old.chefe then
+    raise exception 'Não é possível mudar o usuário chefe pelo aplicativo.';
+  end if;
+  if new.admin is distinct from old.admin and not public.eh_chefe() then
+    raise exception 'Só o usuário chefe pode tornar alguém administrador.';
+  end if;
+  if old.chefe and (new.status <> 'aprovado' or not new.admin) then
+    raise exception 'O usuário chefe não pode perder o acesso.';
+  end if;
+  if new.id = auth.uid() and new.status is distinct from old.status then
+    raise exception 'Você não pode mudar o seu próprio acesso.';
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists protege_perfis on public.perfis;
+create trigger protege_perfis
+  before update on public.perfis
+  for each row execute function public.protege_perfis();
+
 create or replace function public.log_perfis() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
@@ -373,10 +412,11 @@ create policy perfis_ver on public.perfis for select to authenticated
 create policy perfis_admin on public.perfis for update to authenticated
   using (public.eh_admin()) with check (public.eh_admin());
 
--- Cidades e unidades: todo aprovado vê, cria e edita; só o admin exclui.
+-- Unidades: todo aprovado vê, cria e edita (cidade aberta); só o admin exclui.
 create policy cidades_ver     on public.cidades for select to authenticated using (public.eh_aprovado());
-create policy cidades_criar   on public.cidades for insert to authenticated with check (public.eh_aprovado());
-create policy cidades_editar  on public.cidades for update to authenticated using (public.eh_aprovado()) with check (public.eh_aprovado());
+-- Cidades: todo aprovado vê; só administradores criam, renomeiam, encerram e excluem.
+create policy cidades_criar   on public.cidades for insert to authenticated with check (public.eh_admin());
+create policy cidades_editar  on public.cidades for update to authenticated using (public.eh_admin()) with check (public.eh_admin());
 create policy cidades_excluir on public.cidades for delete to authenticated using (public.eh_admin());
 
 create policy unidades_ver     on public.unidades for select to authenticated using (public.eh_aprovado());
@@ -407,7 +447,7 @@ grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on public.cidades, public.unidades, public.contratos to authenticated;
 grant select, update on public.perfis to authenticated;
 grant select on public.historico to authenticated;
-grant execute on function public.eh_aprovado(), public.eh_admin(), public.cidade_aberta(bigint) to authenticated;
+grant execute on function public.eh_aprovado(), public.eh_admin(), public.eh_chefe(), public.cidade_aberta(bigint) to authenticated;
 
 -- ---------- Tempo real -------------------------------------------------
 

@@ -13,6 +13,7 @@ const S = {
   filtro: "todas", busca: "", editCidade: false, confirmDel: null, confirmDelCidade: false,
   modo: null, abaCid: "ativas", pedidoCid: null, divSel: "todas", fc: "", ft: "", fd: "", recusa: null,
   contratos: [], fCtr: "todos", fDiv: "todas", ctrSel: {}, editCtr: false, confirmDelCtr: null, V: {},
+  pessoa: "", histAberto: {}, histBusca: {},
 };
 
 // ---------- utilitários ------------------------------------------------
@@ -41,8 +42,10 @@ function traduz(m) {
   if (/duplicate key/i.test(m)) return "Já existe uma unidade com esse código neste contrato.";
   if (/same.*password|different from the old/i.test(m)) return "A senha nova precisa ser diferente da atual.";
   if (/rate limit|too many/i.test(m)) return "Muitas tentativas seguidas. Espere alguns minutos e tente de novo.";
+  if (/Só o usuário chefe|usuário chefe|próprio acesso/i.test(m)) return m.replace(/^.*?ERROR:\s*/, "");
+  if (/row-level security.*cidades|cidades.*row-level/i.test(m)) return "Só administradores podem criar ou alterar cidades.";
   if (/Só o administrador/i.test(m)) return "Só o administrador pode encerrar ou reabrir cidades.";
-  if (/row-level security/i.test(m)) return "Você não tem permissão para essa alteração.";
+  if (/row-level security/i.test(m)) return /cidades/.test(m) ? "Só administradores podem criar ou alterar cidades." : "Você não tem permissão para essa alteração.";
   return m;
 }
 
@@ -126,7 +129,7 @@ function render() {
   const c = cidadeAtual();
   if (c) app.innerHTML = telaCidade(c);
   else if (h === "cidades") app.innerHTML = telaCidades();
-  else if (h === "aprovacoes" && S.perfil.admin) app.innerHTML = telaAprovacoes();
+  else if ((h === "usuarios" || h === "aprovacoes") && S.perfil.admin) app.innerHTML = telaUsuarios();
   else app.innerHTML = telaInicio();
 }
 
@@ -185,10 +188,11 @@ function shell(aba, html, cheio) {
   const p = S.perfil, pend = S.perfis.filter(x => x.status === "aguardando").length;
   const tab = (id, nome, extra = "") => `<a href="#${id}" class="${aba === id ? "on" : ""}">${nome}${extra}</a>`;
   return `<header class="top">
-      <div class="brand">Controle de Atividades<small>Setor de Estruturas · v3.0</small></div>
-      <nav class="tabs">${tab("inicio", "Início")}${tab("cidades", "Cidades")}${p.admin ? tab("aprovacoes", "Aprovações", pend ? `<span class="badge">${pend}</span>` : "") : ""}</nav>
+      <div class="brand">Controle de Atividades<small>Setor de Estruturas · v3.1</small></div>
+      <nav class="tabs">${tab("inicio", "Início")}${tab("cidades", "Cidades")}</nav>
       <div class="sp"></div>
-      <div class="user"><div class="avatar">${esc(iniciais(p.nome))}</div><span>${esc(p.nome)}${p.admin ? " · admin" : ""}</span>
+      <div class="user"><div class="avatar">${esc(iniciais(p.nome))}</div><span class="who">${esc(p.nome)}<small>${nivel(p)}</small></span>
+        ${p.admin ? `<a class="btn-ghost${aba === "usuarios" ? " on" : ""}" href="#usuarios">Usuários${pend ? `<span class="badge">${pend}</span>` : ""}</a>` : ""}
         <button class="btn-ghost" type="button" data-acao="trocar-senha">Trocar senha</button>
         <button class="btn-ghost" type="button" data-acao="sair">Sair</button></div>
     </header>
@@ -249,7 +253,10 @@ const tagAtraso = l => `<span class="tag ${l ? "late" : "ok"}">${l ? l + " atras
 
 // ---------- Início -----------------------------------------------------
 function telaInicio() {
-  const admin = S.perfil.admin, modo = S.modo || (admin ? "todas" : "minhas");
+  const admin = S.perfil.admin;
+  const pessoas = S.perfis.filter(p => p.status === "aprovado").map(p => p.nome).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  if (S.modo === "pessoa" && (!admin || !pessoas.includes(S.pessoa))) S.modo = null;
+  const modo = S.modo || (admin ? "todas" : "minhas");
   const ativas = cidadesAtivas();
   if (S.filtro !== "todas" && !ativas.some(c => c.id === +S.filtro)) S.filtro = "todas";
   const um = S.filtro !== "todas" ? ativas.find(c => c.id === +S.filtro) : null;
@@ -261,20 +268,21 @@ function telaInicio() {
   const lista = um ? [um] : ativas;
   const passa = u => (!kSel || u.contrato_id === kSel.id) && (S.fDiv === "todas" || u.divisao === S.fDiv);
   const todas = atividades(lista).filter(a => passa(a.u)), meus = todas.filter(a => a.resp === nomeEu());
-  const A = modo === "minhas" ? meus : todas, tot = A.length, cnt = s => A.filter(a => a.st === s).length;
+  const dela = modo === "pessoa" ? todas.filter(a => a.resp === S.pessoa) : [];
+  const A = modo === "minhas" ? meus : modo === "pessoa" ? dela : todas, tot = A.length, cnt = s => A.filter(a => a.st === s).length;
   const L = A.filter(late), unidAtras = new Set(L.map(a => a.u.id)).size;
   const ids = new Set(lista.map(c => c.id)), nUnid = S.unidades.filter(u => ids.has(u.cidade_id) && passa(u)).length;
   const emit = cnt("Emitida"), and = cnt("Iniciada") + cnt("Revisão 1") + cnt("Revisão 2");
   const caminho = [um?.nome, kSel?.nome, S.fDiv !== "todas" ? S.fDiv : null].filter(Boolean).map(esc).join(" · ");
   const comCidade = !um;
 
-  const titulo = modo === "minhas" ? `Olá, ${esc(nomeEu().split(" ")[0])}` : caminho || "Todas as cidades";
-  const sub = modo === "minhas"
-    ? `${tot} atividade${tot === 1 ? "" : "s"} designada${tot === 1 ? "" : "s"} para você · ${caminho || "todas as cidades"}`
+  const titulo = modo === "minhas" ? `Olá, ${esc(nomeEu().split(" ")[0])}` : modo === "pessoa" ? `Atividades de ${esc(S.pessoa)}` : caminho || "Todas as cidades";
+  const sub = modo !== "todas"
+    ? `${tot} atividade${tot === 1 ? "" : "s"} designada${tot === 1 ? "" : "s"} para ${modo === "minhas" ? "você" : esc(S.pessoa)} · ${caminho || "todas as cidades"}`
     : `${um ? `${ks.length} contrato${ks.length === 1 ? "" : "s"}` : `${ativas.length} cidade${ativas.length === 1 ? "" : "s"} em andamento`} · ${nUnid} unidade${nUnid === 1 ? "" : "s"} · ${tot} atividade${tot === 1 ? "" : "s"}`;
 
-  const g1 = modo === "minhas"
-    ? `<div class="g"><div><div class="label">Para você</div><div class="big">${tot}</div><div class="small">atividades designadas</div></div></div>`
+  const g1 = modo !== "todas"
+    ? `<div class="g"><div><div class="label">${modo === "minhas" ? "Para você" : "Para " + esc(S.pessoa.split(" ")[0])}</div><div class="big">${tot}</div><div class="small">atividades designadas</div></div></div>`
     : `<div class="g"><div><div class="label">Unidades</div><div class="big">${nUnid}</div><div class="small">${tot} atividades</div></div></div>`;
   const chip = (acao, v, txt, on) => `<button type="button" data-acao="${acao}" data-v="${esc(v)}" aria-pressed="${on}">${esc(txt)}</button>`;
 
@@ -282,7 +290,8 @@ function telaInicio() {
     <div class="hero-head"><div><div class="label">Painel de acompanhamento</div><h2>${titulo}</h2><div class="sub">${sub}</div></div></div>
     <div class="seg" role="group" aria-label="Quais atividades mostrar">
       <button type="button" data-acao="modo" data-v="minhas" aria-pressed="${modo === "minhas"}">Minhas atividades<span class="cnt">${meus.length}</span></button>
-      <button type="button" data-acao="modo" data-v="todas" aria-pressed="${modo === "todas"}">Todas as atividades</button></div>
+      <button type="button" data-acao="modo" data-v="todas" aria-pressed="${modo === "todas"}">Todas as atividades</button>
+      ${admin ? `<label class="pessoa${modo === "pessoa" ? " on" : ""}"><span>Por pessoa</span><select id="fpessoa" aria-label="Ver as atividades de uma pessoa"><option value="">Escolha…</option>${pessoas.map(n => `<option${modo === "pessoa" && n === S.pessoa ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>` : ""}</div>
     <div class="frows">
       <div class="frow"><span class="k">Cidade</span><div class="hchips">${chip("filtro", "todas", "Todas", S.filtro === "todas")}${ativas.map(c => chip("filtro", c.id, c.nome, String(S.filtro) === String(c.id))).join("")}</div></div>
       ${um ? `<div class="frow"><span class="k">Contrato</span><div class="hchips l2">${chip("fctr", "todos", "Todos", !kSel)}${ks.map(k => chip("fctr", k.id, k.nome, kSel?.id === k.id)).join("")}</div></div>` : ""}
@@ -296,7 +305,7 @@ function telaInicio() {
     </div></div>`;
 
   if (!ativas.length) return shell("inicio", hero + `<div class="page"><div class="empty">Nenhuma cidade em andamento. Cadastre uma na aba <a href="#cidades">Cidades</a>.</div></div>`, true);
-  if (modo === "minhas") return shell("inicio", hero + `<div class="page">${painelMinhas(A, comCidade)}</div>`, true);
+  if (modo !== "todas") return shell("inicio", hero + `<div class="page">${painelMinhas(A, comCidade, modo === "pessoa" ? S.pessoa : null)}</div>`, true);
 
   const etapas = ["calc", "des"].map(e => {
     const a = A.filter(x => x.e === e), l = a.filter(late).length, em = a.filter(x => x.st === "Emitida").length;
@@ -325,14 +334,14 @@ function telaInicio() {
       }).join("")}</div>` : `<div class="empty">Nenhuma unidade aqui ainda.</div>`}</section>`;
   }
 
-  const ult = (um ? S.historico.filter(h => h.cidade_id === um.id) : S.historico).slice(0, 12);
+  const ult = um ? S.historico.filter(h => h.cidade_id === um.id) : S.historico;
   return shell("inicio", hero + `<div class="dash">
     <section class="panel"><header><h3>Status das atividades</h3><span class="note">cálculo + desenho</span></header>${rosca(A)}</section>
     <section class="panel"><header><h3>Cálculo × Desenho</h3><span class="note">atividades em cada status</span></header><div class="bars">${etapas}</div>${miniLegenda()}</section>
     ${blocoMeio}
     <section class="panel"><header><h3>Em atraso</h3><span class="note">previsão vencida e não emitida</span></header>${listaAtrasos(L, comCidade)}</section>
     <section class="panel"><header><h3>Próximas entregas</h3><span class="note">próximos 14 dias</span></header>${listaProximas(A, comCidade)}</section>
-    <section class="panel span2"><header><h3>Últimas alterações</h3></header>${ult.length ? `<ul class="log">${ult.map(h => itemLog(h, comCidade)).join("")}</ul>` : `<div class="empty">Nenhuma alteração ainda.</div>`}</section>
+    ${historicoBox(ult, comCidade, "inicio", "Últimas alterações")}
   </div>`, true);
 }
 
@@ -355,7 +364,7 @@ function listaProximas(A, comCidade) {
   }).join("")}</ul>`;
 }
 
-function painelMinhas(A, comCidade) {
+function painelMinhas(A, comCidade, pessoa) {
   const ord = A.slice().sort((a, b) => (a.d || "9999").localeCompare(b.d || "9999"));
   const pend = ord.filter(a => a.st !== "Emitida" && !late(a));
   const grupos = [
@@ -375,15 +384,15 @@ function painelMinhas(A, comCidade) {
       <div class="task-f"><span class="lbl">Status</span>
         <select class="st-sel" data-uid="${a.u.id}" data-f="${a.e}_status" aria-label="Status" style="background-color:var(--c-${COR[a.st]});${a.st === "A iniciar" ? "color:var(--fg)" : ""}">${STATUS.map(([s]) => `<option${s === a.st ? " selected" : ""}>${s}</option>`).join("")}</select>
         <span class="lbl">Previsão</span><span class="due ${l ? "late" : ""}">${prazo}</span><span class="sp"></span>
-        ${pedindo ? "" : `<button type="button" class="btn-out" data-acao="pedir-recusa" data-key="${key}">Recusar</button>`}</div>
+        ${pedindo || pessoa ? "" : `<button type="button" class="btn-out" data-acao="pedir-recusa" data-key="${key}">Recusar</button>`}</div>
       ${pedindo ? `<div class="confirma"><span>Tirar seu nome desta atividade? Ela fica sem responsável, e o histórico registra que você saiu.</span>
         <button type="button" class="btn danger sm" data-acao="recusar" data-uid="${a.u.id}" data-f="${a.e}_resp">Sim, recusar</button>
         <button type="button" class="btn link" data-acao="cancelar-recusa">Cancelar</button></div>` : ""}
     </div></li>`;
   };
-  return `<section class="panel"><header><h3>Designadas para você</h3><span class="note">não vai fazer? use “Recusar” para tirar seu nome</span></header>
+  return `<section class="panel"><header><h3>Designadas para ${pessoa ? esc(pessoa) : "você"}</h3><span class="note">${pessoa ? "as mudanças de status ficam registradas no histórico com o seu nome" : "não vai fazer? use “Recusar” para tirar seu nome"}</span></header>
     ${A.length ? grupos.filter(g => g[1].length).map(([t, arr, c]) => `<div class="group-t ${c}">${t} · ${arr.length}</div><ul class="mine">${arr.map(card).join("")}</ul>`).join("")
-      : `<div class="empty">Nenhuma atividade designada para você${comCidade ? "" : " nesta cidade"}. Toque em “Todas as atividades” para ver tudo.</div>`}</section>`;
+      : `<div class="empty">Nenhuma atividade designada para ${pessoa ? esc(pessoa) : "você"}${comCidade ? "" : " neste filtro"}. Toque em “Todas as atividades” para ver tudo.</div>`}</section>`;
 }
 
 // ---------- Cidades ----------------------------------------------------
@@ -401,7 +410,7 @@ function cascata(fixa) {
   const temCid = !!c || novaCid, temCtr = !!k || novoCtr, n = fixa ? 0 : 1;
 
   const p1 = fixa ? "" : `<div class="step"><span><i>1</i> · Cidade</span>
-      <select id="sc"><option value="">Escolha…</option>${ativas.map(x => `<option value="${x.id}"${x.id === +S.fc ? " selected" : ""}>${esc(x.nome)}</option>`).join("")}<option value="__nova"${novaCid ? " selected" : ""}>+ Nova cidade…</option></select>
+      <select id="sc"><option value="">Escolha…</option>${ativas.map(x => `<option value="${x.id}"${x.id === +S.fc ? " selected" : ""}>${esc(x.nome)}</option>`).join("")}${S.perfil.admin ? `<option value="__nova"${novaCid ? " selected" : ""}>+ Nova cidade…</option>` : ""}</select>
       ${novaCid ? `<div class="newbox"><label for="ncid">Nome da cidade<input id="ncid" placeholder="Ex.: Mongaguá" value="${valor("ncid")}"></label></div>` : ""}</div>`;
   const p2 = `<div class="step"><span><i>${n + 1}</i> · Contrato</span>
       <select id="sct"${temCid && !novaCid ? "" : " disabled"}>${novaCid ? `<option>+ Novo contrato…</option>` : temCid
@@ -413,7 +422,7 @@ function cascata(fixa) {
       <select id="sd"${temCtr ? "" : " disabled"}>${temCtr ? `<option value=""${S.fd === "" ? " selected" : ""}>Sem divisão</option>${dvs.map(d => `<option${d === S.fd ? " selected" : ""}>${esc(d)}</option>`).join("")}<option value="__nova"${S.fd === "__nova" ? " selected" : ""}>+ Nova divisão…</option>` : `<option>Escolha o contrato primeiro</option>`}</select>
       ${S.fd === "__nova" ? `<div class="newbox"><label for="ndiv">Nome da divisão<input id="ndiv" placeholder="Ex.: Bacia A" value="${valor("ndiv")}"></label></div>` : ""}</div>`;
   const p4 = `<div class="step"><span><i>${n + 3}</i> · Unidade <span class="opt">(opcional)</span></span><input id="uu" placeholder="Ex.: EB15" value="${valor("uu")}"${temCtr ? "" : " disabled"}></div>`;
-  const dica = !temCid ? "Comece pela cidade. Se ela ainda não existe, escolha “+ Nova cidade…”."
+  const dica = !temCid ? (S.perfil.admin ? "Comece pela cidade. Se ela ainda não existe, escolha “+ Nova cidade…”." : "Comece pela cidade. Cidades novas são cadastradas por um administrador.")
     : !temCtr ? (ks.length ? `${esc(c.nome)} tem ${ks.length} contrato${ks.length > 1 ? "s" : ""}. Escolha um ou crie outro.` : "Cadastre o primeiro contrato desta cidade.")
     : "Divisão e unidade são opcionais: dá para cadastrar só a cidade e o contrato agora, e as unidades depois.";
   return `<form class="cascade" id="fcasc"><h3>${fixa ? "Adicionar em " + esc(fixa.nome) : "Cadastrar"}</h3>
@@ -494,8 +503,8 @@ function telaCidade(c) {
          selResp(u.des_resp, "des_resp", u.id), selSt(u.des_status, "des_status", u.id), data(u.des_prev, u.des_status, "des_prev", u.id)];
     return `<tr data-busca="${esc(chave)}"${busca && !chave.includes(busca) ? " hidden" : ""}>
       <td class="unit">${esc(u.codigo)}${moverDiv}</td>
-      <td class="split">${cel[0]}</td><td>${cel[1]}</td><td>${cel[2]}</td>
-      <td class="split">${cel[3]}</td><td>${cel[4]}</td><td>${cel[5]}</td>${del}</tr>`;
+      <td class="split" data-label="Cálculo · responsável">${cel[0]}</td><td data-label="Cálculo · status">${cel[1]}</td><td data-label="Cálculo · previsão">${cel[2]}</td>
+      <td class="split" data-label="Desenho · responsável">${cel[3]}</td><td data-label="Desenho · status">${cel[4]}</td><td data-label="Desenho · previsão">${cel[5]}</td>${del.replace("<td>", '<td class="del">')}</tr>`;
   };
 
   let corpo;
@@ -535,12 +544,12 @@ function telaCidade(c) {
           ${del}</section>`;
   }
 
-  const hist = S.historico.filter(h => h.cidade_id === c.id).slice(0, 100);
+  const hist = S.historico.filter(h => h.cidade_id === c.id);
   const cab = S.editCidade && !fechada
     ? `<form class="formline" id="feditcidade" style="flex:1"><label for="ecid">Nome da cidade<input id="ecid" value="${esc(c.nome)}" required></label>
         <button class="btn" type="submit">Salvar</button><button class="btn sec" type="button" data-acao="cancelar-edicao">Cancelar</button></form>`
     : `<div><h2>${esc(c.nome)}</h2><span class="muted">${ks.length} contrato${ks.length === 1 ? "" : "s"}</span>
-      ${fechada ? "" : `<button class="btn link" type="button" data-acao="editar-cidade">Renomear</button>`}
+      ${fechada || !admin ? "" : `<button class="btn link" type="button" data-acao="editar-cidade">Renomear</button>`}
       ${admin && !fechada ? (S.pedidoCid === c.id
         ? `<div class="confirma"><span>Encerrar <b>${esc(c.nome)}</b>? Ela sai do Início e vai para Encerradas.</span><button class="btn danger sm" type="button" data-acao="encerrar" data-id="${c.id}">Sim, encerrar</button><button class="btn link" type="button" data-acao="cancelar-cid">Cancelar</button></div>`
         : `<button class="btn link" type="button" data-acao="pedir-cid" data-id="${c.id}">Encerrar cidade</button>`) : ""}
@@ -560,37 +569,73 @@ function telaCidade(c) {
     ${obsBox}
     ${fechada ? "" : cascata(c)}
     ${k ? `${abasDiv}
-    <div class="two wide">
-      <div class="box"><div class="scroll"><table>
+    <div class="box"><table class="grade">
         <thead><tr class="group"><th></th><th colspan="3" class="split">Cálculo</th><th colspan="3" class="split">Desenho</th>${colDel ? "<th></th>" : ""}</tr>
-        <tr><th>Unidade</th><th class="split">Responsável</th><th>Status</th><th>Previsão de entrega</th><th class="split">Responsável</th><th>Status</th><th>Previsão de entrega</th>${colDel ? "<th></th>" : ""}</tr></thead>
+        <tr><th>Unidade</th><th class="split">Responsável</th><th>Status</th><th>Previsão</th><th class="split">Responsável</th><th>Status</th><th>Previsão</th>${colDel ? "<th></th>" : ""}</tr></thead>
         <tbody>${corpo || `<tr><td colspan="${nCols}" class="muted">Nenhuma unidade neste contrato ainda.${fechada ? "" : " Adicione pelo formulário acima."}</td></tr>`}</tbody>
-      </table></div></div>
-      <div class="box"><header><h3>Histórico da cidade</h3></header>
-        ${hist.length ? `<ul class="log">${hist.map(h => itemLog(h, false)).join("")}</ul>` : `<div class="empty">Nenhuma alteração ainda.</div>`}</div>
+      </table></div>
+    ${historicoBox(hist, false, "cidade-" + c.id, "Histórico da cidade")}
     </div>` : `<div class="empty">Esta cidade ainda não tem contrato. Cadastre o primeiro no formulário acima.</div>`}`);
 }
 
-function telaAprovacoes() {
+// ---------- nível de acesso ---------------------------------------------
+const nivel = p => p.chefe ? "Chefe" : p.admin ? "Administrador" : "Colaborador";
+
+// ---------- histórico recolhível (2 linhas → relatório) -----------------
+function historicoBox(lista, comCidade, chave, titulo) {
+  const aberto = S.histAberto[chave];
+  if (!lista.length) return `<section class="panel span2 hist"><header><h3>${titulo}</h3></header><div class="empty">Nenhuma alteração ainda.</div></section>`;
+  if (!aberto) return `<section class="panel span2 hist"><header><h3>${titulo}</h3>
+      <button class="btn sec sm" type="button" data-acao="hist" data-v="${chave}">Ver todas (${lista.length})</button></header>
+      <ul class="log curto">${lista.slice(0, 2).map(h => itemLog(h, comCidade)).join("")}</ul></section>`;
+  const b = (S.histBusca[chave] || "").toLowerCase();
+  const linhas = lista.filter(h => !b || [h.usuario_nome, h.cidade, h.unidade, h.campo, h.valor_antigo, h.valor_novo].join(" ").toLowerCase().includes(b));
+  return `<section class="panel span2 hist"><header><h3>${titulo}</h3>
+      <div class="bar"><input type="search" class="hbusca" data-chave="${chave}" placeholder="Filtrar por pessoa, unidade, campo…" value="${esc(S.histBusca[chave] || "")}">
+      <button class="btn sec sm" type="button" data-acao="hist" data-v="${chave}">Recolher</button></div></header>
+    <div class="rel"><table class="relatorio"><thead><tr><th>Quando</th><th>Quem</th>${comCidade ? "<th>Cidade</th>" : ""}<th>Unidade</th><th>O que mudou</th><th>De</th><th>Para</th></tr></thead>
+      <tbody>${linhas.map(h => `<tr data-hb="${esc([h.usuario_nome, h.cidade, h.unidade, h.campo, h.valor_antigo, h.valor_novo].join(" ").toLowerCase())}">
+        <td class="num">${quando(h.quando)}</td><td>${esc(h.usuario_nome)}</td>${comCidade ? `<td>${esc(h.cidade || "—")}</td>` : ""}<td>${esc(h.unidade || "—")}</td>
+        <td>${esc(h.campo)}</td><td class="val">${esc(h.valor_antigo || "—")}</td><td class="val">${esc(h.valor_novo || "—")}</td></tr>`).join("")}</tbody></table></div>
+    <span class="note">${lista.length} alteraç${lista.length === 1 ? "ão" : "ões"} registrada${lista.length === 1 ? "" : "s"} (mostrando as mais recentes, até 500).</span></section>`;
+}
+
+// ---------- Usuários (administradores) ----------------------------------
+function telaUsuarios() {
+  const eu = S.perfil, chefe = !!eu.chefe;
   const pend = S.perfis.filter(p => p.status === "aguardando");
   const outros = S.perfis.filter(p => p.status !== "aguardando");
-  const rotulo = { aprovado: ["Ativo", "st-done"], recusado: ["Sem acesso", "late"] };
-  return shell("aprovacoes", `
-    <div class="bar"><h2>Pedidos de acesso</h2></div>
+  const situacao = { aprovado: ["Ativo", "ok"], recusado: ["Sem acesso", "late"] };
+  const nivelCel = p => {
+    if (p.chefe) return `<span class="chip st-emit">Chefe</span>`;
+    if (!chefe || p.status !== "aprovado") return `<span class="chip ${p.admin ? "st-run" : "st-todo"}">${nivel(p)}</span>`;
+    return `<select class="nivel" data-id="${p.id}" aria-label="Nível de ${esc(p.nome)}">
+      <option value="colab"${p.admin ? "" : " selected"}>Colaborador</option><option value="admin"${p.admin ? " selected" : ""}>Administrador</option></select>`;
+  };
+  return shell("usuarios", `
+    <div class="bar"><h2>Usuários</h2></div>
+    <div class="niveis">
+      <div><b>Chefe</b><span>Tudo o que o administrador faz e decide quem é administrador.</span></div>
+      <div><b>Administrador</b><span>Aprova cadastros e cria, renomeia, encerra, reabre e exclui cidades.</span></div>
+      <div><b>Colaborador</b><span>Cadastra contratos, divisões e unidades e atualiza responsáveis, status e datas.</span></div>
+    </div>
+    <h3>Pedidos de acesso</h3>
     <div class="box"><div class="scroll"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Pedido em</th><th></th></tr></thead>
       <tbody>${pend.length ? pend.map(p => `<tr><td>${esc(p.nome)}</td><td>${esc(p.email)}</td><td>${quando(p.criado_em)}</td>
-        <td style="text-align:right"><button class="btn sm" type="button" data-acao="status" data-id="${p.id}" data-v="aprovado">Aprovar</button>
-        <button class="btn sec sm" type="button" data-acao="status" data-id="${p.id}" data-v="recusado">Recusar</button></td></tr>`).join("")
+        <td class="acoes"><button class="btn sm" type="button" data-acao="aprovar" data-id="${p.id}">Aprovar como colaborador</button>
+        ${chefe ? `<button class="btn sec sm" type="button" data-acao="aprovar" data-id="${p.id}" data-admin="1">Aprovar como administrador</button>` : ""}
+        <button class="btn link" type="button" data-acao="status" data-id="${p.id}" data-v="recusado">Recusar</button></td></tr>`).join("")
         : `<tr><td colspan="4" class="muted">Nenhum pedido pendente.</td></tr>`}</tbody></table></div></div>
-    <div class="bar"><h2>Usuários</h2></div>
-    <div class="box"><div class="scroll"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Situação</th><th></th></tr></thead>
+    <h3>Usuários cadastrados</h3>
+    <div class="box"><div class="scroll"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Nível</th><th>Situação</th><th></th></tr></thead>
       <tbody>${outros.map(p => {
-        const [txt, cls] = rotulo[p.status];
-        const acao = p.id === S.uid ? `<span class="muted small">você</span>`
+        const [txt, cls] = situacao[p.status];
+        const acao = p.id === S.uid ? `<span class="muted small">você</span>` : p.chefe ? ""
           : p.status === "aprovado" ? `<button class="btn sec sm" type="button" data-acao="status" data-id="${p.id}" data-v="recusado">Remover acesso</button>`
           : `<button class="btn sm" type="button" data-acao="status" data-id="${p.id}" data-v="aprovado">Liberar acesso</button>`;
-        return `<tr><td>${esc(p.nome)}${p.admin ? ` <span class="chip st-emit">admin</span>` : ""}</td><td>${esc(p.email)}</td><td><span class="chip ${cls}">${txt}</span></td><td style="text-align:right">${acao}</td></tr>`;
-      }).join("")}</tbody></table></div></div>`);
+        return `<tr><td>${esc(p.nome)}</td><td>${esc(p.email)}</td><td>${nivelCel(p)}</td><td><span class="chip ${cls}">${txt}</span></td><td class="acoes">${acao}</td></tr>`;
+      }).join("")}</tbody></table></div></div>
+    ${chefe ? "" : `<p class="note">Só o usuário chefe muda o nível de alguém para administrador.</p>`}`);
 }
 
 // ---------- ações -----------------------------------------------------
@@ -705,6 +750,14 @@ app.addEventListener("submit", e => {
 
 app.addEventListener("change", async e => {
   const t = e.target;
+  if (t.id === "fpessoa") { if (t.value) { S.modo = "pessoa"; S.pessoa = t.value; } else { S.modo = "todas"; } render(); return; }
+  if (t.classList.contains("nivel")) {
+    const adm = t.value === "admin";
+    const { error } = await sb.from("perfis").update({ admin: adm }).eq("id", t.dataset.id);
+    if (error) { toast(traduz(error.message), true); render(); return; }
+    Object.assign(S.perfis.find(x => x.id === t.dataset.id) || {}, { admin: adm });
+    toast(adm ? "Agora é administrador" : "Agora é colaborador"); render(); return;
+  }
   if (t.id === "sc") { S.fc = t.value; S.ft = ""; S.fd = ""; render(); document.getElementById(S.fc === "__nova" ? "ncid" : "sct")?.focus(); return; }
   if (t.id === "sct") { S.ft = t.value; S.fd = ""; render(); document.getElementById(S.ft === "__novo" ? "nctr" : "sd")?.focus(); return; }
   if (t.id === "sd") { S.fd = t.value; render(); document.getElementById(S.fd === "__nova" ? "ndiv" : "uu")?.focus(); return; }
@@ -716,6 +769,11 @@ app.addEventListener("change", async e => {
 
 app.addEventListener("input", e => {
   if (["ncid", "nctr", "nobs", "ndiv", "uu"].includes(e.target.id)) { S.V[e.target.id] = e.target.value; return; }
+  if (e.target.classList.contains("hbusca")) {
+    const ch = e.target.dataset.chave, b = e.target.value.toLowerCase(); S.histBusca[ch] = e.target.value;
+    e.target.closest(".hist").querySelectorAll("tr[data-hb]").forEach(tr => { tr.hidden = !!b && !tr.dataset.hb.includes(b); });
+    return;
+  }
   if (e.target.id !== "busca") return;
   S.busca = e.target.value; const b = S.busca.toLowerCase();
   app.querySelectorAll("tr[data-busca]").forEach(tr => { tr.hidden = !!b && !tr.dataset.busca.includes(b); });
@@ -730,6 +788,15 @@ app.addEventListener("click", async e => {
     case "trocar-senha": S.novaSenha = "trocar"; break;
     case "cancelar-senha": e.preventDefault(); S.novaSenha = null; break;
     case "modo": S.modo = el.dataset.v; S.recusa = null; break;
+    case "hist": S.histAberto[el.dataset.v] = !S.histAberto[el.dataset.v]; break;
+    case "aprovar": {
+      el.disabled = true;
+      const mud = el.dataset.admin ? { status: "aprovado", admin: true } : { status: "aprovado" };
+      const { error } = await sb.from("perfis").update(mud).eq("id", el.dataset.id);
+      if (error) { el.disabled = false; return toast(traduz(error.message), true); }
+      Object.assign(S.perfis.find(x => x.id === el.dataset.id) || {}, mud);
+      toast(el.dataset.admin ? "Aprovado como administrador" : "Aprovado como colaborador"); break;
+    }
     case "filtro": S.filtro = el.dataset.v; S.fCtr = "todos"; S.fDiv = "todas"; break;
     case "fctr": S.fCtr = el.dataset.v; S.fDiv = "todas"; break;
     case "fdiv": S.fDiv = el.dataset.v; break;

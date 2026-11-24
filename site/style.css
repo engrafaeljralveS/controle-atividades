@@ -366,3 +366,54 @@ textarea{resize:vertical;min-height:90px;line-height:1.45;font:inherit}
 .hero > .seg{justify-self:start;max-width:100%}
 .obsbox > .btn.link,.obsbox > .confirma{justify-self:start}
 .aviso-banco{padding:12px 20px;background:var(--late-bg);color:var(--late);font-size:13px;border-bottom:1px solid var(--late)}
+
+/* =================== Versão 3.1: níveis, filtro por pessoa, histórico =================== */
+.user .who{display:grid;line-height:1.2}
+.user .who small{font-size:11px;opacity:.8}
+.btn-ghost{text-decoration:none;display:inline-flex;align-items:center;gap:4px}
+.btn-ghost.on{background:rgb(255 255 255 / .18)}
+.hero .seg{align-items:center;flex-wrap:wrap}
+.seg .pessoa{display:inline-flex;align-items:center;gap:6px;padding:2px 4px 2px 12px;border-radius:999px;color:var(--hero-muted);font-size:13px;font-weight:600}
+.seg .pessoa.on{background:var(--hero-run);color:var(--hero-1);box-shadow:0 0 14px rgb(90 162 240 / .5)}
+.seg .pessoa select{font:inherit;font-size:13px;border-radius:999px;border:1px solid var(--hero-line);background:rgb(255 255 255 / .08);color:var(--hero-fg);padding:4px 10px;max-width:180px}
+.seg .pessoa.on select{background:rgb(255 255 255 / .35);color:var(--hero-1);border-color:transparent}
+.seg .pessoa select option{color:#17212b;background:#fff}
+/* histórico: 2 linhas ou relatório */
+.hist .log.curto{padding:0;gap:8px}
+.hist > header .bar{gap:8px}
+.hist .hbusca{min-width:0;width:min(280px,60vw);padding:6px 10px;font-size:13px}
+.rel{max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+table.relatorio{width:100%;font-size:13px}
+table.relatorio th{position:sticky;top:0;z-index:1}
+table.relatorio td{white-space:normal;vertical-align:top}
+table.relatorio td.num{white-space:nowrap;font-size:12px}
+table.relatorio td.val{max-width:260px;overflow-wrap:anywhere;color:var(--muted)}
+/* página de usuários */
+.niveis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.niveis div{display:grid;gap:2px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:13px}
+.niveis span{color:var(--muted)}
+td.acoes{text-align:right;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+select.nivel{font:inherit;font-size:13px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg)}
+/* tabela da cidade: cabe na tela, sem barra lateral */
+table.grade{width:100%;table-layout:auto}
+table.grade th,table.grade td{padding:6px 8px}
+table.grade .resp{max-width:150px}
+table.grade input.date{width:128px;padding:3px 4px}
+table.grade .pill{padding:4px 22px 4px 9px}
+table.grade td.del{text-align:right}
+@media (max-width:1100px){
+  table.grade thead{display:none}
+  table.grade,table.grade tbody{display:block;width:100%}
+  table.grade tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 12px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  table.grade tr.div-row{display:block;padding:0}
+  table.grade td{display:block;border:0;padding:0;white-space:normal;min-width:0}
+  table.grade td.split{border-left:0}
+  table.grade td[data-label]::before{content:attr(data-label);display:block;font-size:11px;color:var(--muted);margin-bottom:2px}
+  table.grade td.unit{grid-column:1/-1;display:flex;align-items:center;gap:10px}
+  table.grade td.del{grid-column:1/-1;text-align:left}
+  table.grade td[colspan]{grid-column:1/-1}
+  table.grade .resp{max-width:100%;width:100%}
+  table.grade input.date{width:100%}
+  tbody tr:hover td{background:none}
+}
+@media (max-width:560px){ table.grade tr{grid-template-columns:repeat(2,minmax(0,1fr))} }
