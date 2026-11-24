@@ -50,7 +50,7 @@ function traduz(m) {
 }
 
 // ---------- configuração ---------------------------------------------
-if (typeof SUPABASE_URL === "undefined" || !/^https:\/\//.test(SUPABASE_URL) || typeof supabase === "undefined") {
+if (typeof SUPABASE_URL === "undefined" || !/^https?:\/\//.test(SUPABASE_URL) || typeof supabase === "undefined") {
   app.innerHTML = `<div class="msg"><h2>Falta configurar</h2><p>Abra o arquivo <code>config.js</code> e cole a URL e a chave <b>anon</b> do seu projeto Supabase.</p></div>`;
   throw new Error("config.js não preenchido");
 }

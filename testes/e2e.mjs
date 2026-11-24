@@ -19,18 +19,22 @@ const U = {
 };
 
 const resultados = [];
-let navegador;
+let navegador; const abertas = [];
 async function passo(nome, fn) {
   const t0 = Date.now();
   try { await fn(); resultados.push([true, nome]); console.log(`  OK    ${nome} (${Date.now() - t0} ms)`); }
-  catch (e) { resultados.push([false, nome, e.message]); console.log(`  FALHA ${nome}\n        → ${e.message.split("\n")[0]}`); }
+  catch (e) {
+    resultados.push([false, nome, e.message]); console.log(`  FALHA ${nome}\n        → ${e.message.split("\n")[0]}`);
+    for (const p of abertas) { try { const t = (await p.evaluate(() => document.body.innerText)).replace(/\s+/g, " ").slice(0, 220); console.log(`        [${p.quem || "?"} · ${p.url().split("/").pop()}] ${t}`); if (p.erros.length) console.log(`        erros: ${p.erros.slice(-2).join(" | ")}`); } catch {} }
+    await Promise.all(abertas.map((p, i) => foto(p, `falha-${resultados.length}-${p.quem || i}`)));
+  }
 }
 function confere(cond, msg) { if (!cond) throw new Error(msg); }
 
 async function pagina(largura = 1300, altura = 900) {
   const ctx = await navegador.newContext({ viewport: { width: largura, height: altura }, locale: "pt-BR" });
   const p = await ctx.newPage();
-  p.erros = [];
+  p.erros = []; abertas.push(p);
   p.on("pageerror", e => p.erros.push(e.message));
   p.on("console", m => { if (m.type() === "error" && !/favicon|fonts\.g/.test(m.text())) p.erros.push(m.text()); });
   return p;
@@ -60,6 +64,7 @@ const linha = (p, cod) => p.locator(`table.grade tbody tr:has(td.unit:text-match
   navegador = await chromium.launch();
   console.log("\n=== 1. Cadastro e aprovação ===");
   const chefe = await pagina(), hannah = await pagina(), ana = await pagina(), joao = await pagina(390, 844);
+  chefe.quem = "chefe"; hannah.quem = "hannah"; ana.quem = "ana"; joao.quem = "joao";
 
   await passo("Primeiro cadastro vira Chefe e entra direto", async () => {
     await cadastrar(chefe, U.chefe); await chefe.waitForSelector(".hero", { timeout: 15000 });
