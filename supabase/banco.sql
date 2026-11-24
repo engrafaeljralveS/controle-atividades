@@ -69,6 +69,45 @@ alter table public.unidades add column if not exists calc_designado_em  timestam
 alter table public.unidades add column if not exists des_designado_por  text;
 alter table public.unidades add column if not exists des_designado_em   timestamptz;
 
+-- ---------- Versão 3: contratos (Cidade → Contrato → Divisão → Unidade) --
+
+create table if not exists public.contratos (
+  id           bigint generated always as identity primary key,
+  cidade_id    bigint not null references public.cidades(id) on delete cascade,
+  nome         text not null,
+  observacoes  text not null default '',
+  obs_por      text,
+  obs_em       timestamptz,
+  divisoes     text[] not null default '{}',
+  criado_em    timestamptz not null default now(),
+  unique (cidade_id, nome)
+);
+create index if not exists contratos_cidade_idx on public.contratos (cidade_id);
+
+alter table public.unidades add column if not exists contrato_id bigint references public.contratos(id) on delete cascade;
+create index if not exists unidades_contrato_idx on public.unidades (contrato_id);
+
+-- Cidades que ainda não têm contrato ganham um, com o nome do contrato antigo
+insert into public.contratos (cidade_id, nome)
+select c.id, coalesce(nullif(trim(c.contrato), ''), 'Contrato principal')
+from public.cidades c
+where not exists (select 1 from public.contratos k where k.cidade_id = c.id);
+
+-- Unidades antigas passam para dentro do contrato da sua cidade
+update public.unidades u set contrato_id = (
+  select k.id from public.contratos k where k.cidade_id = u.cidade_id order by k.id limit 1)
+where u.contrato_id is null;
+
+alter table public.unidades alter column contrato_id set not null;
+
+-- O código da unidade passa a ser único dentro do contrato (não mais da cidade)
+alter table public.unidades drop constraint if exists unidades_cidade_id_codigo_key;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'unidades_contrato_codigo_key') then
+    alter table public.unidades add constraint unidades_contrato_codigo_key unique (contrato_id, codigo);
+  end if;
+end $$;
+
 -- ---------- Funções de permissão --------------------------------------
 
 create or replace function public.eh_aprovado() returns boolean
@@ -139,6 +178,11 @@ declare
 begin
   select nome into v_nome from public.perfis where id = auth.uid();
   v_nome := coalesce(v_nome, 'Sistema');
+
+  -- a cidade da unidade é sempre a cidade do contrato
+  if tg_op <> 'DELETE' and new.contrato_id is not null then
+    select cidade_id into new.cidade_id from public.contratos where id = new.contrato_id;
+  end if;
 
   if tg_op = 'INSERT' then
     -- quem designou: sempre quem está gravando (não dá para forjar)
@@ -244,6 +288,44 @@ create trigger historico_cidades
   before update or delete on public.cidades
   for each row execute function public.log_cidades();
 
+create or replace function public.log_contratos() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_nome text;
+begin
+  if tg_op = 'INSERT' then
+    select nome into v_nome from public.perfis where id = auth.uid();
+    new.obs_por := case when new.observacoes <> '' then coalesce(v_nome, 'Sistema') end;
+    new.obs_em  := case when new.observacoes <> '' then now() end;
+    perform public.registrar(new.cidade_id, null, 'Contrato criado', null, new.nome);
+    return new;
+  elsif tg_op = 'DELETE' then
+    perform public.registrar(old.cidade_id, null, 'Contrato excluído', old.nome, null);
+    return old;
+  end if;
+
+  if new.observacoes is distinct from old.observacoes then
+    select nome into v_nome from public.perfis where id = auth.uid();
+    new.obs_por := coalesce(v_nome, 'Sistema');
+    new.obs_em  := now();
+    perform public.registrar(new.cidade_id, null, new.nome || ' · Observações', old.observacoes, new.observacoes);
+  elsif auth.uid() is not null then
+    new.obs_por := old.obs_por;
+    new.obs_em  := old.obs_em;
+  end if;
+  if new.nome is distinct from old.nome then
+    perform public.registrar(new.cidade_id, null, 'Nome do contrato', old.nome, new.nome); end if;
+  if new.divisoes is distinct from old.divisoes then
+    perform public.registrar(new.cidade_id, null, new.nome || ' · Divisões',
+      array_to_string(old.divisoes, ', '), array_to_string(new.divisoes, ', ')); end if;
+  return new;
+end $$;
+
+drop trigger if exists historico_contratos on public.contratos;
+create trigger historico_contratos
+  before insert or update or delete on public.contratos
+  for each row execute function public.log_contratos();
+
 create or replace function public.log_perfis() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
@@ -266,6 +348,7 @@ alter table public.perfis    enable row level security;
 alter table public.cidades   enable row level security;
 alter table public.unidades  enable row level security;
 alter table public.historico enable row level security;
+alter table public.contratos enable row level security;
 
 drop policy if exists perfis_ver      on public.perfis;
 drop policy if exists perfis_admin    on public.perfis;
@@ -278,6 +361,10 @@ drop policy if exists unidades_criar   on public.unidades;
 drop policy if exists unidades_editar  on public.unidades;
 drop policy if exists unidades_excluir on public.unidades;
 drop policy if exists historico_ver   on public.historico;
+drop policy if exists contratos_ver     on public.contratos;
+drop policy if exists contratos_criar   on public.contratos;
+drop policy if exists contratos_editar  on public.contratos;
+drop policy if exists contratos_excluir on public.contratos;
 
 -- Perfis: cada um vê o próprio; aprovados veem os outros aprovados
 -- (para escolher responsáveis); só o administrador vê todos e altera.
@@ -303,12 +390,21 @@ create policy unidades_excluir on public.unidades for delete to authenticated us
 -- Histórico: só leitura (quem escreve é o banco, pelos gatilhos acima).
 create policy historico_ver on public.historico for select to authenticated using (public.eh_aprovado());
 
+-- Contratos: todo aprovado vê, cria e edita (cidade aberta); só o admin exclui.
+create policy contratos_ver     on public.contratos for select to authenticated using (public.eh_aprovado());
+create policy contratos_criar   on public.contratos for insert to authenticated
+  with check (public.eh_aprovado() and public.cidade_aberta(cidade_id));
+create policy contratos_editar  on public.contratos for update to authenticated
+  using (public.eh_aprovado() and public.cidade_aberta(cidade_id))
+  with check (public.eh_aprovado() and public.cidade_aberta(cidade_id));
+create policy contratos_excluir on public.contratos for delete to authenticated using (public.eh_admin());
+
 -- ---------- Permissões de acesso pela API ------------------------------
 -- (projetos novos do Supabase não liberam as tabelas automaticamente;
 --  quem decide o que cada um vê são as regras de segurança acima)
 
 grant usage on schema public to anon, authenticated;
-grant select, insert, update, delete on public.cidades, public.unidades to authenticated;
+grant select, insert, update, delete on public.cidades, public.unidades, public.contratos to authenticated;
 grant select, update on public.perfis to authenticated;
 grant select on public.historico to authenticated;
 grant execute on function public.eh_aprovado(), public.eh_admin(), public.cidade_aberta(bigint) to authenticated;
@@ -318,7 +414,7 @@ grant execute on function public.eh_aprovado(), public.eh_admin(), public.cidade
 do $$
 declare t text;
 begin
-  foreach t in array array['perfis','cidades','unidades','historico'] loop
+  foreach t in array array['perfis','cidades','unidades','historico','contratos'] loop
     begin
       execute format('alter publication supabase_realtime add table public.%I', t);
     exception when duplicate_object then null;

@@ -302,7 +302,6 @@ a.btn{display:inline-block;text-decoration:none}
 .cascade{display:grid;gap:10px;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)}
 .cascade .row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
 .cascade label{display:grid;gap:4px;font-size:12px;font-weight:600;color:var(--muted);flex:1 1 170px;min-width:0}
-.cascade .step{font-family:var(--mono);color:var(--accent)}
 .cascade select{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg);min-width:0}
 .cascade select:disabled,.cascade input:disabled{opacity:.5}
 .cascade .hint{font-size:12px;color:var(--muted)}
@@ -316,3 +315,54 @@ tbody tr.div-row:hover td{background:var(--surface-2)}
 .div-title b{font-family:var(--display);font-size:13px;letter-spacing:.06em;text-transform:uppercase}
 .movediv{display:block;margin-top:2px;font:inherit;font-size:11px;color:var(--muted);background:transparent;border:1px solid transparent;border-radius:4px;padding:0 2px;cursor:pointer;max-width:120px}
 .movediv:hover{border-color:var(--line)}
+
+/* =================== Versão 3: contratos =================== */
+:root{ --note-bg:#fff8e6; --note-line:#f0d58a; }
+@media (prefers-color-scheme: dark){:root{ --note-bg:#2e2714; --note-line:#6b5a22; }}
+.auth .brand small{display:block;font-family:var(--body);font-weight:500;font-size:12px;color:var(--muted)}
+/* filtros em 3 níveis */
+.frows{display:grid;gap:8px}
+.frow{display:grid;grid-template-columns:76px minmax(0,1fr);gap:10px;align-items:center}
+.frow .k{font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;color:var(--hero-muted)}
+@media (max-width:560px){.frow{grid-template-columns:1fr;gap:4px}}
+.hchips.l2 button[aria-pressed="true"]{background:var(--hero-run);border-color:var(--hero-run);color:var(--hero-1)}
+.hchips.l3 button[aria-pressed="true"]{background:var(--hero-emit);border-color:var(--hero-emit);color:var(--hero-1)}
+.hobs{background:rgb(255 255 255 / .06);border:1px dashed var(--hero-line);border-radius:10px;padding:10px 12px;font-size:13px;white-space:pre-wrap}
+.hobs b{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--hero-muted);margin-bottom:4px}
+/* cadastro em cascata */
+.cascade h3{font-size:15px}
+.steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:900px){.steps{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:520px){.steps{grid-template-columns:1fr}}
+.step{display:grid;gap:6px;align-content:start;min-width:0}
+.step > span{font-size:12px;font-weight:600;color:var(--muted)}
+.step > span i{font-style:normal;font-family:var(--mono);color:var(--accent)}
+.step .opt{font-weight:400}
+.step select,.step input{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg);min-width:0;width:100%}
+.newbox{display:grid;gap:6px;padding:10px;border:1px dashed var(--accent);border-radius:10px;background:var(--surface)}
+.newbox label{display:grid;gap:4px;font-size:12px;color:var(--muted);font-weight:600}
+.newbox input,.newbox textarea{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface-2);color:var(--fg);min-width:0}
+textarea{resize:vertical;min-height:90px;line-height:1.45;font:inherit}
+.cascade .end{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+/* cartões de contrato */
+.contracts{display:grid;gap:8px}
+.ctr{display:grid;gap:6px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2)}
+.ctr .row{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.ctr b{font-size:13px}
+.ctr .stack{height:8px}
+/* abas de contrato e observações */
+.ctabs{display:flex;gap:6px;flex-wrap:wrap;border-bottom:2px solid var(--line)}
+.ctabs button{font:inherit;font-size:14px;font-weight:600;padding:9px 14px;border:0;border-bottom:3px solid transparent;margin-bottom:-2px;background:none;color:var(--muted);cursor:pointer}
+.ctabs button[aria-pressed="true"]{color:var(--fg);border-bottom-color:var(--accent)}
+.ctabs .cnt{font-family:var(--mono);font-size:12px;margin-left:6px;opacity:.7}
+.obsbox{display:grid;gap:8px;padding:14px;border:1px solid var(--note-line);border-left:4px solid var(--note-line);border-radius:10px;background:var(--note-bg)}
+.obsbox .row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.obsbox h3{font-size:13px;letter-spacing:.06em;text-transform:uppercase}
+.obsbox p{margin:0;white-space:pre-wrap}
+.obsbox .meta{font-size:11px;color:var(--muted)}
+.obsbox label{display:grid;gap:4px;font-size:12px;font-weight:600;color:var(--muted)}
+.obsbox input,.obsbox textarea{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg)}
+.hero > .seg{justify-self:start;max-width:100%}
+.obsbox > .btn.link,.obsbox > .confirma{justify-self:start}
+.aviso-banco{padding:12px 20px;background:var(--late-bg);color:var(--late);font-size:13px;border-bottom:1px solid var(--late)}
