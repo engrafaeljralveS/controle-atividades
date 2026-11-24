@@ -1,0 +1,54 @@
+# Testes de ponta a ponta num Supabase LOCAL e descartável (não toca no banco real).
+# Rodar manualmente: Actions > Testes do aplicativo > Run workflow
+name: Testes do aplicativo
+
+on:
+  workflow_dispatch:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Subir Supabase local (descartável)
+        run: |
+          mkdir -p /tmp/sb && cd /tmp/sb
+          supabase init
+          supabase start -x studio,imgproxy,edge-runtime,logflare,vector,storage-api
+          supabase status -o env > /tmp/sb/env
+          grep -E '^(API_URL|ANON_KEY)=' /tmp/sb/env | sed 's/=.*/=…/'
+
+      - name: Criar o banco com o banco.sql
+        run: psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 --single-transaction -q -f supabase/banco.sql
+
+      - name: Servir o site apontando para o Supabase local
+        run: |
+          set -a; . /tmp/sb/env; set +a
+          mkdir -p /tmp/www && cp site/* /tmp/www/
+          printf 'const SUPABASE_URL = "%s";\nconst SUPABASE_ANON_KEY = "%s";\n' "$API_URL" "$ANON_KEY" > /tmp/www/config.js
+          cd /tmp/www && nohup python3 -m http.server 8080 > /tmp/www.log 2>&1 &
+          sleep 2 && curl -sf http://localhost:8080/ > /dev/null && echo "site no ar"
+
+      - name: Instalar navegador de teste
+        run: |
+          npm init -y > /dev/null
+          npm i --no-audit --no-fund playwright@1.49.1 @supabase/supabase-js@2.117.3
+          npx playwright install --with-deps chromium
+
+      - name: Rodar os testes
+        run: |
+          set -a; . /tmp/sb/env; set +a
+          SITE_URL=http://localhost:8080/ SUPABASE_URL="$API_URL" SUPABASE_KEY="$ANON_KEY" node testes/e2e.mjs
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capturas-de-tela
+          path: testes/capturas
+          if-no-files-found: ignore

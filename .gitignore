@@ -1,2 +1,4 @@
 *.zip
 .DS_Store
+testes/capturas/
+node_modules/
