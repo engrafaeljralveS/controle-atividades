@@ -37,6 +37,8 @@ function traduz(m) {
   if (/at least 6/i.test(m)) return "A senha precisa ter pelo menos 6 caracteres.";
   if (/Email not confirmed/i.test(m)) return "Confirme seu e-mail antes de entrar (veja sua caixa de entrada).";
   if (/duplicate key/i.test(m)) return "Já existe uma unidade com esse código nesta cidade.";
+  if (/same.*password|different from the old/i.test(m)) return "A senha nova precisa ser diferente da atual.";
+  if (/rate limit|too many/i.test(m)) return "Muitas tentativas seguidas. Espere alguns minutos e tente de novo.";
   if (/Só o administrador/i.test(m)) return "Só o administrador pode encerrar ou reabrir cidades.";
   if (/row-level security/i.test(m)) return "Você não tem permissão para essa alteração.";
   return m;
@@ -53,6 +55,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let canal = null, tmr = null;
 
 sb.auth.onAuthStateChange((evento, session) => {
+  if (evento === "PASSWORD_RECOVERY") { S.novaSenha = "recuperar"; setTimeout(render, 0); }
   S.session = session;
   const id = session?.user?.id ?? null;
   if (id !== S.uid || evento === "INITIAL_SESSION") { S.uid = id; setTimeout(iniciar, 0); }
@@ -110,7 +113,8 @@ function renderDepois() {
 function render() {
   const h = location.hash.slice(1);
   if (!S.carregado) { app.innerHTML = `<div class="msg">Carregando…</div>`; return; }
-  if (!S.session) { app.innerHTML = h === "cadastro" ? telaCadastro() : telaLogin(); return; }
+  if (!S.session) { app.innerHTML = h === "cadastro" ? telaCadastro() : h === "esqueci" ? telaEsqueci() : telaLogin(); return; }
+  if (S.novaSenha) { app.innerHTML = telaNovaSenha(); return; }
   if (!S.perfil) { app.innerHTML = telaMsg("Cadastro não encontrado", "Sua conta existe, mas não tem perfil no sistema. Fale com o administrador." + (S.erroPerfil ? `<br><code class="small">${esc(S.erroPerfil)}</code>` : "")); return; }
   if (S.perfil.status === "aguardando") { app.innerHTML = telaMsg(`Olá, ${esc(S.perfil.nome)}`, "Seu acesso está aguardando aprovação do administrador. Esta tela abre sozinha assim que for aprovado."); return; }
   if (S.perfil.status !== "aprovado") { app.innerHTML = telaMsg("Acesso não liberado", "Seu acesso não está ativo. Fale com o administrador."); return; }
@@ -128,6 +132,7 @@ function telaLogin() {
     <label for="lemail">E-mail<input id="lemail" type="email" autocomplete="username" required></label>
     <label for="lsenha">Senha<input id="lsenha" type="password" autocomplete="current-password" required></label>
     <button class="btn" type="submit">Entrar</button>
+    <p><a href="#esqueci">Esqueci minha senha</a></p>
     <p>Não tem acesso? <a href="#cadastro">Criar conta</a></p>
   </form></div>`;
 }
@@ -141,6 +146,28 @@ function telaCadastro() {
     <div class="info" id="cmsg">Depois de criar, sua conta fica aguardando aprovação do administrador.</div>
     <button class="btn" type="submit">Pedir acesso</button>
     <p><a href="#login">Voltar ao login</a></p>
+  </form></div>`;
+}
+
+function telaEsqueci() {
+  return `<div class="authwrap"><form class="auth" id="fesqueci">
+    <div class="brand">Esqueci minha senha</div>
+    <label for="eemail">E-mail da sua conta<input id="eemail" type="email" autocomplete="username" required></label>
+    <div class="info" id="emsg">Vamos enviar um link para o seu e-mail. Abra o link neste mesmo navegador para criar a senha nova.</div>
+    <button class="btn" type="submit">Enviar link</button>
+    <p><a href="#login">Voltar ao login</a></p>
+  </form></div>`;
+}
+
+function telaNovaSenha() {
+  const rec = S.novaSenha === "recuperar";
+  return `<div class="authwrap"><form class="auth" id="fnovasenha">
+    <div class="brand">${rec ? "Criar senha nova" : "Trocar senha"}</div>
+    <label for="ns1">Senha nova (mínimo 6 caracteres)<input id="ns1" type="password" autocomplete="new-password" minlength="6" required></label>
+    <label for="ns2">Repita a senha nova<input id="ns2" type="password" autocomplete="new-password" minlength="6" required></label>
+    <div class="info" id="nmsg">${rec ? "Você entrou pelo link do e-mail. Escolha a senha nova para continuar." : "Escolha a senha nova. Na próxima vez, entre com ela."}</div>
+    <button class="btn" type="submit">Salvar senha</button>
+    ${rec ? "" : `<button class="btn sec" type="button" data-acao="cancelar-senha">Cancelar</button>`}
   </form></div>`;
 }
 
@@ -158,6 +185,7 @@ function shell(aba, html, cheio) {
       <nav class="tabs">${tab("inicio", "Início")}${tab("cidades", "Cidades")}${p.admin ? tab("aprovacoes", "Aprovações", pend ? `<span class="badge">${pend}</span>` : "") : ""}</nav>
       <div class="sp"></div>
       <div class="user"><div class="avatar">${esc(iniciais(p.nome))}</div><span>${esc(p.nome)}${p.admin ? " · admin" : ""}</span>
+        <button class="btn-ghost" type="button" data-acao="trocar-senha">Trocar senha</button>
         <button class="btn-ghost" type="button" data-acao="sair">Sair</button></div>
     </header>
     ${cheio ? html : `<div class="page">${html}</div>`}
@@ -547,6 +575,21 @@ app.addEventListener("submit", e => {
     history.replaceState(null, "", location.pathname);
   });
 
+  if (f.id === "fesqueci") ocupado(f, async () => {
+    const msg = document.getElementById("emsg");
+    const { error } = await sb.auth.resetPasswordForEmail(v("eemail"), { redirectTo: location.origin + location.pathname });
+    if (error) { msg.className = "info erro"; msg.textContent = traduz(error.message); return; }
+    msg.className = "info"; msg.textContent = "Pronto. Se esse e-mail tiver conta, chega um link em alguns minutos (veja também o spam).";
+  });
+
+  if (f.id === "fnovasenha") ocupado(f, async () => {
+    const a = document.getElementById("ns1").value, b = document.getElementById("ns2").value, msg = document.getElementById("nmsg");
+    if (a !== b) { msg.className = "info erro"; msg.textContent = "As duas senhas não são iguais."; return; }
+    const { error } = await sb.auth.updateUser({ password: a });
+    if (error) { msg.className = "info erro"; msg.textContent = traduz(error.message); return; }
+    S.novaSenha = null; history.replaceState(null, "", location.pathname); toast("Senha alterada"); render();
+  });
+
   if (f.id === "fcidade") ocupado(f, async () => {
     const { data, error } = await sb.from("cidades").insert({ nome: v("ncid"), contrato: v("ncon") }).select().single();
     if (error) return toast(traduz(error.message), true);
@@ -596,7 +639,9 @@ app.addEventListener("click", async e => {
   const acao = el.dataset.acao, id = el.dataset.id ? +el.dataset.id : null;
   if (el.tagName === "A") return;
   switch (acao) {
-    case "sair": await sb.auth.signOut(); history.replaceState(null, "", location.pathname); return;
+    case "sair": S.novaSenha = null; await sb.auth.signOut(); history.replaceState(null, "", location.pathname); return;
+    case "trocar-senha": S.novaSenha = "trocar"; break;
+    case "cancelar-senha": e.preventDefault(); S.novaSenha = null; break;
     case "modo": S.modo = el.dataset.v; S.recusa = null; break;
     case "filtro": S.filtro = el.dataset.v; break;
     case "aba-cid": S.abaCid = el.dataset.v; S.pedidoCid = null; break;
