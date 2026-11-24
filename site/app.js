@@ -29,7 +29,7 @@ const cidadeAtual = () => { const m = location.hash.match(/^#cidade-(\d+)$/); re
 
 function toast(msg, erro) {
   const t = document.getElementById("toast");
-  t.textContent = msg; t.className = "toast" + (erro ? " erro" : ""); t.hidden = false;
+  t.textContent = msg; t.className = "toast" + (erro ? " erro" : ""); t.hidden = false; t.dataset.seq = (+t.dataset.seq || 0) + 1;
   clearTimeout(toast.t); toast.t = setTimeout(() => { t.hidden = true; }, erro ? 7000 : 2500);
 }
 function traduz(m) {
@@ -66,8 +66,10 @@ sb.auth.onAuthStateChange((evento, session) => {
   if (id !== S.uid || evento === "INITIAL_SESSION") { S.uid = id; setTimeout(iniciar, 0); }
 });
 
+let geracao = 0;
 async function iniciar() {
-  if (canal) { sb.removeChannel(canal); canal = null; }
+  const minha = ++geracao;                       // se outra inicialização começar, esta desiste
+  if (canal) { const velho = canal; canal = null; try { await sb.removeChannel(velho); } catch {} }
   S.carregado = false; S.perfil = null;
   if (!S.session) { S.carregado = true; render(); return; }
   render();
@@ -75,8 +77,9 @@ async function iniciar() {
   S.erroPerfil = error ? error.message : "";
   S.perfil = data;
   if (data?.status === "aprovado") await carregar();
+  if (minha !== geracao) return;
   S.carregado = true;
-  canal = sb.channel("mudancas")
+  canal = sb.channel("mudancas-" + minha + "-" + Date.now())
     .on("postgres_changes", { event: "*", schema: "public" }, () => { clearTimeout(tmr); tmr = setTimeout(atualizar, 400); })
     .subscribe();
   render();

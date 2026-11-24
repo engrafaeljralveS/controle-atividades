@@ -36,11 +36,17 @@ async function pagina(largura = 1300, altura = 900) {
   const p = await ctx.newPage();
   p.erros = []; abertas.push(p);
   p.on("pageerror", e => p.erros.push(e.message));
-  p.on("console", m => { if (m.type() === "error" && !/favicon|fonts\.g/.test(m.text())) p.erros.push(m.text()); });
+  p.on("console", m => { if (m.type() === "error" && !/favicon|fonts\.g|status of (409|400|401)/.test(m.text())) p.erros.push(m.text()); });
   return p;
 }
 async function foto(p, nome) { await p.screenshot({ path: `${SHOTS}/${nome}.png`, fullPage: true }).catch(() => {}); }
-async function toast(p) { await p.waitForSelector("#toast:not([hidden])", { timeout: 8000 }); return p.textContent("#toast"); }
+const seq = p => p.evaluate(() => +(document.querySelector("#toast")?.dataset.seq || 0));
+async function toast(p, antes) {   // espera um aviso NOVO (depois de "antes")
+  if (antes === undefined) antes = p.seqVisto || 0;
+  await p.waitForFunction(n => +(document.querySelector("#toast")?.dataset.seq || 0) > n, antes, { timeout: 10000 });
+  p.seqVisto = await seq(p); return p.textContent("#toast");
+}
+async function comAviso(p, acao) { const antes = await seq(p).catch(() => 0); await acao(); return toast(p, antes); }
 async function semRolagemLateral(p) { return p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1); }
 
 async function cadastrar(p, u) {
@@ -79,22 +85,21 @@ const linha = (p, cod) => p.locator(`table.grade tbody tr:has(td.unit:text-match
   });
   await passo("Chefe aprova como colaboradora e a tela dela abre sozinha (tempo real)", async () => {
     await chefe.click('a[href="#usuarios"]'); await chefe.waitForSelector(".niveis");
-    await chefe.click(`tr:has-text("${U.hannah.email}") [data-acao=aprovar]:not([data-admin])`);
-    await toast(chefe);
+        await comAviso(chefe, () => chefe.click(`tr:has-text("${U.hannah.email}") [data-acao=aprovar]:not([data-admin])`));
     await hannah.waitForSelector(".hero", { timeout: 20000 });
     confere((await hannah.textContent(".user .who")).includes("Colaborador"), "nível Colaborador não aparece");
   });
   await passo("Chefe aprova a Ana como administradora", async () => {
     await cadastrar(ana, U.ana); await ana.waitForSelector("text=aguardando aprovação", { timeout: 15000 });
     await chefe.goto(SITE + "#usuarios"); await chefe.reload(); await chefe.waitForSelector(`tr:has-text("${U.ana.email}") [data-admin]`, { timeout: 15000 });
-    await chefe.click(`tr:has-text("${U.ana.email}") [data-acao=aprovar][data-admin]`); await toast(chefe);
+    await comAviso(chefe, () => chefe.click(`tr:has-text("${U.ana.email}") [data-acao=aprovar][data-admin]`));
     await ana.waitForSelector(".hero", { timeout: 20000 });
     confere((await ana.textContent(".user .who")).includes("Administrador"), "nível Administrador não aparece");
   });
   await passo("João (celular) se cadastra e é aprovado como colaborador", async () => {
     await cadastrar(joao, U.joao); await joao.waitForSelector("text=aguardando aprovação", { timeout: 15000 });
     await chefe.reload(); await chefe.waitForSelector(`tr:has-text("${U.joao.email}") [data-acao=aprovar]`, { timeout: 15000 });
-    await chefe.click(`tr:has-text("${U.joao.email}") [data-acao=aprovar]:not([data-admin])`); await toast(chefe);
+    await comAviso(chefe, () => chefe.click(`tr:has-text("${U.joao.email}") [data-acao=aprovar]:not([data-admin])`));
     await joao.waitForSelector(".hero", { timeout: 20000 });
   });
   await passo("Administradora não chefe não vê 'Aprovar como administrador' nem muda nível", async () => {
@@ -114,8 +119,8 @@ const linha = (p, cod) => p.locator(`table.grade tbody tr:has(td.unit:text-match
     await chefe.selectOption("#sc", "__nova"); await chefe.fill("#ncid", "Itanhaém");
     await chefe.fill("#nctr", "Contrato BBL"); await chefe.fill("#nobs", "Responsável: Eng. Marcos\nMedição até o dia 5.");
     await chefe.selectOption("#sd", "__nova"); await chefe.fill("#ndiv", "Bacia A"); await chefe.fill("#uu", "eb01");
-    await chefe.click("#fcasc button[type=submit]");
-    confere((await toast(chefe)).includes("Itanhaém → Contrato BBL → Bacia A → EB01"), "mensagem de salvo inesperada");
+    const t = await comAviso(chefe, () => chefe.click("#fcasc button[type=submit]"));
+    confere(t.includes("Itanhaém → Contrato BBL → Bacia A → EB01"), "mensagem de salvo inesperada: " + t);
   });
   await passo("Os textos digitados não somem ao trocar as listas da cascata", async () => {
     await chefe.goto(SITE + "#cidades"); await chefe.reload(); await chefe.waitForSelector("#fcasc");
@@ -128,18 +133,17 @@ const linha = (p, cod) => p.locator(`table.grade tbody tr:has(td.unit:text-match
   await passo("Segundo contrato na mesma cidade e mesmo código de unidade em contratos diferentes", async () => {
     await irCidade(chefe, "Itanhaém");
     await chefe.selectOption("#sct", "__novo"); await chefe.fill("#nctr", "Contrato Sabesp 045"); await chefe.fill("#uu", "EB01");
-    await chefe.click("#fcasc button[type=submit]"); await toast(chefe);
+    await comAviso(chefe, () => chefe.click("#fcasc button[type=submit]"));
     confere(await chefe.locator(".ctabs button").count() === 2, "não apareceram 2 abas de contrato");
   });
   await passo("Código repetido no MESMO contrato é recusado com mensagem clara", async () => {
     await chefe.click('.ctabs button:has-text("Contrato BBL")');
-    await chefe.fill("#uu", "EB01"); await chefe.click("#fcasc button[type=submit]");
-    const t = await toast(chefe);
+    await chefe.fill("#uu", "EB01");     const t = await comAviso(chefe, () => chefe.click("#fcasc button[type=submit]"));
     confere(/já existe uma unidade/i.test(t), "mensagem: " + t);
   });
   await passo("Unidades EB02 e EB03 na Bacia A / nova Bacia B", async () => {
-    await chefe.selectOption("#sd", "Bacia A"); await chefe.fill("#uu", "EB02"); await chefe.click("#fcasc button[type=submit]"); await toast(chefe);
-    await chefe.selectOption("#sd", "__nova"); await chefe.fill("#ndiv", "Bacia B"); await chefe.fill("#uu", "EB03"); await chefe.click("#fcasc button[type=submit]"); await toast(chefe);
+    await chefe.selectOption("#sd", "Bacia A"); await chefe.fill("#uu", "EB02"); await comAviso(chefe, () => chefe.click("#fcasc button[type=submit]"));
+    await chefe.selectOption("#sd", "__nova"); await chefe.fill("#ndiv", "Bacia B"); await chefe.fill("#uu", "EB03"); await comAviso(chefe, () => chefe.click("#fcasc button[type=submit]"));
     confere(await chefe.locator(".dtabs button").count() >= 3, "abas de divisão não apareceram");
   });
 
@@ -167,7 +171,7 @@ const linha = (p, cod) => p.locator(`table.grade tbody tr:has(td.unit:text-match
   });
   await passo("Hannah muda o status pelo cartão e o chefe vê a mudança sem recarregar (tempo real)", async () => {
     await chefe.goto(SITE + "#inicio"); await chefe.waitForSelector(".hero");
-    await hannah.locator(".st-sel").first().selectOption("Iniciada"); await toast(hannah);
+    await comAviso(hannah, () => hannah.locator(".st-sel").first().selectOption("Iniciada"));
     await chefe.waitForFunction(() => document.querySelector(".hist")?.textContent.includes("Iniciada"), null, { timeout: 15000 });
   });
   await passo("Painel do chefe conta 1 atraso e mostra a EB01 na lista de atrasos", async () => {
@@ -192,7 +196,7 @@ const linha = (p, cod) => p.locator(`table.grade tbody tr:has(td.unit:text-match
     await foto(chefe, "por-pessoa");
   });
   await passo("Hannah recusa a atividade e o nome dela sai", async () => {
-    await hannah.click("[data-acao=pedir-recusa]"); await hannah.click("[data-acao=recusar]"); await toast(hannah);
+    await hannah.click("[data-acao=pedir-recusa]"); await comAviso(hannah, () => hannah.click("[data-acao=recusar]"));
     await hannah.waitForSelector("text=Nenhuma atividade designada", { timeout: 10000 });
   });
 
@@ -201,7 +205,7 @@ const linha = (p, cod) => p.locator(`table.grade tbody tr:has(td.unit:text-match
     await irCidade(hannah, "Itanhaém");
     await hannah.click('.ctabs button:has-text("Contrato BBL")');
     await hannah.click("[data-acao=editar-ctr]"); await hannah.fill("#kobs", "Responsável: Eng. Marcos\nNovo telefone (13) 99999-0000");
-    await hannah.click("#fctr button[type=submit]"); await toast(hannah);
+    await comAviso(hannah, () => hannah.click("#fctr button[type=submit]"));
     confere((await hannah.textContent(".obsbox")).includes("Atualizado por Hannah Colab"), "não mostra quem atualizou");
   });
 
@@ -218,20 +222,20 @@ const linha = (p, cod) => p.locator(`table.grade tbody tr:has(td.unit:text-match
     await joao.click('.seg button[data-v=todas]');
     confere(await joao.locator('.hchips button:has-text("Peruíbe")').count() === 1, "Peruíbe não estava no Início do João");
     await ana.goto(SITE + "#cidades"); await ana.waitForSelector(".cities");
-    await ana.click('article.city:has(h3:text-is("Peruíbe")) [data-acao=pedir-cid]'); await ana.click("[data-acao=encerrar]"); await toast(ana);
+    await ana.click('article.city:has(h3:text-is("Peruíbe")) [data-acao=pedir-cid]'); await comAviso(ana, () => ana.click("[data-acao=encerrar]"));
     await joao.waitForFunction(() => ![...document.querySelectorAll(".hchips button")].some(b => b.textContent.includes("Peruíbe")), null, { timeout: 15000 });
   });
   await passo("Cidade encerrada fica só para consulta e reabre", async () => {
     await ana.click('.seg2 button[data-v=enc]'); await ana.click('article.city:has(h3:text-is("Peruíbe")) a.btn'); await ana.waitForSelector(".banner");
     confere(await ana.locator("#fcasc").count() === 0, "formulário de cadastro aparece em cidade encerrada");
-    await ana.click('.banner [data-acao=pedir-cid]'); await ana.click('[data-acao=reabrir]'); await toast(ana);
+    await ana.click('.banner [data-acao=pedir-cid]'); await comAviso(ana, () => ana.click('[data-acao=reabrir]'));
   });
 
   console.log("\n=== 6. Exclusões (administrador) ===");
   await passo("Chefe exclui unidade EB03, depois o Contrato Sabesp 045", async () => {
     await irCidade(chefe, "Itanhaém");
-    await linha(chefe, "EB03").locator("[data-acao=pedir-excluir]").click(); await linha(chefe, "EB03").locator("[data-acao=excluir]").click(); await toast(chefe);
-    await chefe.click('.ctabs button:has-text("Sabesp")'); await chefe.click("[data-acao=pedir-excluir-ctr]"); await chefe.click("[data-acao=excluir-ctr]"); await toast(chefe);
+    await linha(chefe, "EB03").locator("[data-acao=pedir-excluir]").click(); await comAviso(chefe, () => linha(chefe, "EB03").locator("[data-acao=excluir]").click());
+    await chefe.click('.ctabs button:has-text("Sabesp")'); await chefe.click("[data-acao=pedir-excluir-ctr]"); await comAviso(chefe, () => chefe.click("[data-acao=excluir-ctr]"));
     confere(await chefe.locator(".ctabs button").count() === 1, "contrato não saiu");
   });
 
@@ -266,14 +270,14 @@ const linha = (p, cod) => p.locator(`table.grade tbody tr:has(td.unit:text-match
   console.log("\n=== 9. Senha ===");
   await passo("João troca a senha, sai e entra com a nova", async () => {
     await joao.click("[data-acao=trocar-senha]"); await joao.fill("#ns1", "novaSenha9"); await joao.fill("#ns2", "novaSenha9");
-    await joao.click("#fnovasenha button[type=submit]"); await toast(joao);
+    await comAviso(joao, () => joao.click("#fnovasenha button[type=submit]"));
     await joao.click("[data-acao=sair]"); await joao.waitForSelector("#flogin");
     await entrar(joao, U.joao, "novaSenha9");
   });
   await passo("Senha errada mostra mensagem em português", async () => {
     const p = await pagina(); await p.goto(SITE + "#login"); await p.waitForSelector("#flogin");
-    await p.fill("#lemail", U.joao.email); await p.fill("#lsenha", "errada000"); await p.click("#flogin button[type=submit]");
-    confere(/incorretos/i.test(await toast(p)), "mensagem inesperada"); await p.context().close();
+    await p.fill("#lemail", U.joao.email); await p.fill("#lsenha", "errada000");
+    confere(/incorretos/i.test(await comAviso(p, () => p.click("#flogin button[type=submit]"))), "mensagem inesperada"); await p.context().close();
   });
 
   console.log("\n=== 10. Segurança direto na API (tentando burlar o aplicativo) ===");
