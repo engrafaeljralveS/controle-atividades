@@ -14,7 +14,7 @@ jobs:
 
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.122.1
 
       - name: Subir Supabase local (descartável)
         run: |
